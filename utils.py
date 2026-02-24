@@ -381,15 +381,18 @@ def notice_slack(chat_message):
     # プロンプトに埋め込むための（問い合わせ内容と関連性が高い）従業員情報テキストを取得
     context = get_context(target_employees)
 
+    # 選定理由を生成
+    selection_reason = generate_selection_reason(chat_message, target_employees)
+
     # 現在日時を取得
     now_datetime = get_datetime()
 
     # Slack通知用のプロンプト生成
     prompt = PromptTemplate(
-        input_variables=["slack_id_text", "query", "context", "now_datetime"],
+        input_variables=["slack_id_text", "query", "context", "selection_reason", "now_datetime"],
         template=ct.SYSTEM_PROMPT_NOTICE_SLACK,
     )
-    prompt_message = prompt.format(slack_id_text=slack_id_text, query=chat_message, context=context, now_datetime=now_datetime)
+    prompt_message = prompt.format(slack_id_text=slack_id_text, query=chat_message, context=context, selection_reason=selection_reason, now_datetime=now_datetime)
 
     # Slack通知の実行
     agent_executor.invoke({"input": prompt_message})
@@ -517,6 +520,32 @@ def create_slack_id_text(slack_ids):
             slack_id_text += "と"
     
     return slack_id_text
+
+# 問題2：選定理由の生成を行うための関数
+def generate_selection_reason(query, target_employees):
+    """
+    選定理由の生成
+
+    Args:
+        query: ユーザーからの問い合わせ内容
+        target_employees: 選定された従業員情報のリスト
+
+    Returns:
+        生成された選定理由のテキスト
+    """
+    # 選定された従業員情報をプロンプト用に整形
+    context = get_context(target_employees)
+    
+    # 選定理由生成用のプロンプトを作成
+    prompt_template = ChatPromptTemplate.from_messages([
+        ("system", ct.SYSTEM_PROMPT_SELECTION_REASON)
+    ])
+    
+    # プロンプトを実行して選定理由を生成
+    messages = prompt_template.format_prompt(query=query, context=context).to_messages()
+    response = st.session_state.llm(messages)
+    
+    return response.content.strip()
 
 
 def get_context(docs):
