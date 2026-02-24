@@ -6,6 +6,8 @@
 # ライブラリの読み込み
 ############################################################
 from langchain_community.document_loaders import PyMuPDFLoader, Docx2txtLoader, TextLoader
+# 問題1：CSVファイルを読み込むためのLoaderをインポート
+from langchain_community.document_loaders.csv_loader import CSVLoader
 
 
 ############################################################
@@ -78,11 +80,15 @@ ENCODING_KIND = "cl100k_base"
 # RAG参照用のデータソース系
 # ==========================================
 RAG_TOP_FOLDER_PATH = "./data/rag"
+# 問題1：従業員情報検索用のデータソースのトップフォルダパスも定義
+SLACK_TOP_FOLDER_PATH = "./data/slack"
 
 SUPPORTED_EXTENSIONS = {
     ".pdf": PyMuPDFLoader,
     ".docx": Docx2txtLoader,
-    ".txt": lambda path: TextLoader(path, encoding="utf-8")
+    ".txt": lambda path: TextLoader(path, encoding="utf-8"),
+    # 問題1：CSVファイルを読み込むためのLoaderをSUPPORTED_EXTENSIONSに追加
+    ".csv": lambda path: CSVLoader(path, encoding="utf-8-sig")
 }
 
 DB_ALL_PATH = "./.db_all"
@@ -96,11 +102,15 @@ AI_AGENT_MAX_ITERATIONS = 5
 
 DB_SERVICE_PATH = "./.db_service"
 DB_CUSTOMER_PATH = "./.db_customer"
+# 問題1：問い合わせ履歴検索用のDB_PATHも定義
+DB_INQUIRY_HISTORY_PATH = "./.db_inquiry_history"
 
 DB_NAMES = {
     DB_COMPANY_PATH: f"{RAG_TOP_FOLDER_PATH}/company",
     DB_SERVICE_PATH: f"{RAG_TOP_FOLDER_PATH}/service",
-    DB_CUSTOMER_PATH: f"{RAG_TOP_FOLDER_PATH}/customer"
+    DB_CUSTOMER_PATH: f"{RAG_TOP_FOLDER_PATH}/customer",
+    # 問題1：問い合わせ履歴検索用のDB_PATHも定義
+    DB_INQUIRY_HISTORY_PATH: f"{SLACK_TOP_FOLDER_PATH}/問い合わせ対応履歴.csv"
 }
 
 AI_AGENT_MODE_ON = "利用する"
@@ -115,6 +125,9 @@ SEARCH_SERVICE_INFO_TOOL_NAME = "search_service_info_tool"
 SEARCH_SERVICE_INFO_TOOL_DESCRIPTION = "自社サービス「EcoTee」に関する情報を参照したい時に使う"
 SEARCH_CUSTOMER_COMMUNICATION_INFO_TOOL_NAME = "search_customer_communication_tool"
 SEARCH_CUSTOMER_COMMUNICATION_INFO_TOOL_DESCRIPTION = "顧客とのやりとりに関する情報を参照したい時に使う"
+# 問題1：問い合わせ履歴検索用のToolの名前と説明文を定義
+SEARCH_INQUIRY_HISTORY_TOOL_NAME = "search_inquiry_history_tool"
+SEARCH_INQUIRY_HISTORY_TOOL_DESCRIPTION = "過去の問い合わせ履歴（問い合わせ内容、対応内容、対応時間など）と類似事例の解決方法を参照したい時に使う"
 SEARCH_WEB_INFO_TOOL_NAME = "search_web_tool"
 SEARCH_WEB_INFO_TOOL_DESCRIPTION = "自社サービス「HealthX」に関する質問で、Web検索が必要と判断した場合に使う"
 
@@ -158,25 +171,34 @@ SYSTEM_PROMPT_EMPLOYEE_SELECTION = """
     以下の「従業員情報」は、問い合わせに対しての一人以上の対応者候補のデータです。
     しかし、問い合わせ内容との関連性が薄い従業員情報が含まれている可能性があります。
     以下の「条件」に従い、従業員情報の中から、問い合わせ内容との関連性が特に高いと思われる
-    従業員の「ID」をカンマ区切りで返してください。
+    従業員の「ID」と「選定理由」を出力してください。
 
     # 顧客からの問い合わせ
     {query}
 
     # 条件
     - 全ての従業員が、問い合わせ内容との関連性が高い（対応者候補である）と判断した場合は、
-    全ての従業員の従業員IDをカンマ区切りで返してください。ただし、関連性が低い（対応者候補に含めるべきでない）
+    全ての従業員の従業員IDと選定理由を出力してください。ただし、関連性が低い（対応者候補に含めるべきでない）
     と判断した場合は省いてください。
     - 特に、「過去の問い合わせ対応履歴」と、「対応可能な問い合わせカテゴリ」、また「現在の主要業務」を元に判定を
     行ってください。
-    - 一人も対応者候補がいない場合、空文字を返してください。
+    - 選定理由は、従業員の名前、部署、役職を含めた自然な文章形式で記述してください。
+    - 選定理由の例：「○○さんは、△△部の□□として、過去に同様の問い合わせに対応した経験があり、〜に関する専門知識を持っています。」
+    - 選定理由には、その従業員を選定した具体的な根拠（過去の対応履歴、得意分野、主要業務、保有資格など）を明確に含めてください。
+    - 一人も対応者候補がいない場合、空のリストを返してください。
     - 判定は厳しく行ってください。
 
     # 従業員情報
     {context}
 
     # 出力フォーマット
-    {format_instruction}
+    以下のJSON形式で出力してください：
+    [
+        {{"employee_id": "従業員ID1", "reason": "名前さんは、部署の役職として、過去に...専門知識を持っています。"}},
+        {{"employee_id": "従業員ID2", "reason": "名前さんは、部署の役職として、過去に...専門知識を持っています。"}}
+    ]
+    
+    必ずJSON形式で出力してください。他のテキストは含めないでください。
 """
 
 SYSTEM_PROMPT_NOTICE_SLACK = """
@@ -207,11 +229,14 @@ SYSTEM_PROMPT_NOTICE_SLACK = """
     - 「メッセージフォーマット」を使い、以下の各項目の文章を生成してください。
         - 【問い合わせ情報】の「カテゴリ」
         - 【問い合わせ情報】の「日時」
+        - 【メンション先の選定理由】
         - 【回答・対応案とその根拠】
 
     - 「顧客から弊社への問い合わせ内容」と「従業員情報と過去の問い合わせ対応履歴」を基に文章を生成してください。
 
     - 【問い合わせ情報】の「カテゴリ」は、【問い合わせ情報】の「問い合わせ内容」を基に適切なものを生成してください。
+
+    - 【メンション先の選定理由】について、以下の「担当者選定理由の情報」に基づいて生成してください。
 
     - 【回答・対応案】について、以下の条件に従って生成してください。
         - 回答・対応案の内容と、それが良いと判断した根拠を、それぞれ3つずつ生成してください。
@@ -225,6 +250,10 @@ SYSTEM_PROMPT_NOTICE_SLACK = """
     {context}
 
 
+    # 担当者選定理由の情報
+    {selection_reason}
+
+
     # メッセージフォーマット
     こちらは顧客問い合わせに対しての「担当者割り振り」と「回答・対応案の提示」を自動で行うAIアシスタントです。
     担当者は問い合わせ内容を確認し、対応してください。
@@ -236,6 +265,11 @@ SYSTEM_PROMPT_NOTICE_SLACK = """
     ・カテゴリ: 
     ・問い合わせ者: 山田太郎
     ・日時: {now_datetime}
+
+    --------------------
+    【メンション先の選定理由】
+
+
 
     --------------------
 

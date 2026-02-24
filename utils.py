@@ -134,12 +134,22 @@ def create_rag_chain(db_name):
 
 def add_docs(folder_path, docs_all):
     """
-    フォルダ内のファイル一覧を取得
+    フォルダ内のファイル一覧を取得、またはファイル直接読み込み
 
     Args:
-        folder_path: フォルダのパス
+        folder_path: フォルダのパス、またはファイルのパス
         docs_all: 各ファイルデータを格納するリスト
     """
+    # 問題1：ファイルが直接指定された場合
+    if os.path.isfile(folder_path):
+        file_extension = os.path.splitext(folder_path)[1]
+        if file_extension in ct.SUPPORTED_EXTENSIONS:
+            loader = ct.SUPPORTED_EXTENSIONS[file_extension](folder_path)
+            docs = loader.load()
+            docs_all.extend(docs)
+        return
+    
+    # フォルダが指定された場合
     files = os.listdir(folder_path)
     for file in files:
         # ファイルの拡張子を取得
@@ -202,6 +212,25 @@ def run_customer_doc_chain(param):
     # 顧客とのやり取りに関するデータ参照に特化したChainを実行してLLMからの回答取得
     ai_msg = st.session_state.customer_doc_chain.invoke({"input": param, "chat_history": st.session_state.chat_history})
 
+    # 会話履歴への追加
+    st.session_state.chat_history.extend([HumanMessage(content=param), AIMessage(content=ai_msg["answer"])])
+
+    return ai_msg["answer"]
+
+#問題1：問い合わせ内容に関連する過去の問い合わせ履歴を検索するための関数
+def run_inquiry_history_doc_chain(param):
+    """
+    問い合わせ履歴検索に特化したTool設定用の関数
+
+    Args:
+        param: ユーザー入力値（検索クエリ）
+    
+    Returns:
+        問い合わせ履歴の検索結果
+    """
+    # 問い合わせ履歴検索に特化したChainを実行してLLMからの回答取得
+    ai_msg = st.session_state.inquiry_history_doc_chain.invoke({"input": param, "chat_history": st.session_state.chat_history})
+    
     # 会話履歴への追加
     st.session_state.chat_history.extend([HumanMessage(content=param), AIMessage(content=ai_msg["answer"])])
 
